@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using octo_fiesta.Models.Domain;
 using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
 
 namespace octo_fiesta.Services.SoundCloud;
 
@@ -81,7 +82,6 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
 
         return new Song
         {
-            Id = $"ext-soundcloud-song-{id}",
             Title = title,
             Artist = artist,
             Album = GetString(item, "album") ?? "SoundCloud",
