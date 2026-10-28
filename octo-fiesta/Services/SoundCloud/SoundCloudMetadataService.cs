@@ -359,35 +359,78 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
 
-        for (var attempt = 0; attempt < 2; attempt++)
+        // Use yt-dlp's own SoundCloud extractor for API requests. SoundCloud can
+        // reject ordinary HttpClient requests with 403 even while yt-dlp search
+        // works, so a separately scraped client_id is not reliable here.
+        var json = await RunSoundCloudCollectionSearchAsync(endpoint, query, Math.Clamp(limit, 1, 50));
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("collection", out var collection) ||
+            collection.ValueKind != JsonValueKind.Array)
+            return new();
+
+        return collection.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => item.Clone())
+            .ToList();
+    }
+
+    private static async Task<string> RunSoundCloudCollectionSearchAsync(
+        string endpoint, string query, int limit)
+    {
+        // Reuse yt-dlp's initialized SoundCloud extractor so client-id discovery,
+        // refresh-on-403 behavior, headers, and HTTP handling match scsearch.
+        const string script = """
+import json
+import sys
+from yt_dlp import YoutubeDL
+from yt_dlp.extractor.soundcloud import SoundcloudSearchIE
+
+endpoint, query, raw_limit = sys.argv[1:4]
+limit = min(max(int(raw_limit), 1), 50)
+
+with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+    ie = SoundcloudSearchIE(ydl)
+    ie.initialize()
+    response = ie._call_api(
+        f"https://api-v2.soundcloud.com/{endpoint.lstrip('/')}",
+        query,
+        "Searching SoundCloud collections",
+        query={
+            "q": query,
+            "limit": limit,
+            "linked_partitioning": 1,
+            "offset": 0,
+        },
+        headers=ie._HEADERS,
+    )
+    print(json.dumps(response))
+""";
+
+        var start = new ProcessStartInfo
         {
-            var clientId = await GetClientIdAsync(forceRefresh: attempt > 0);
-            var url = $"https://api-v2.soundcloud.com/{endpoint}" +
-                      $"?q={Uri.EscapeDataString(query)}" +
-                      $"&limit={Math.Clamp(limit, 1, 50)}&linked_partitioning=1" +
-                      $"&client_id={Uri.EscapeDataString(clientId)}";
+            FileName = "python3",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add(script);
+        start.ArgumentList.Add(endpoint);
+        start.ArgumentList.Add(query);
+        start.ArgumentList.Add(limit.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-            using var response = await _httpClient.GetAsync(url);
-            if ((response.StatusCode == System.Net.HttpStatusCode.Forbidden ||
-                 response.StatusCode == System.Net.HttpStatusCode.Unauthorized) && attempt == 0)
-            {
-                continue;
-            }
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("Could not start Python for SoundCloud API search.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var output = await stdout;
+        var error = await stderr;
 
-            if (!response.IsSuccessStatusCode) return new();
-
-            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            if (!doc.RootElement.TryGetProperty("collection", out var collection) ||
-                collection.ValueKind != JsonValueKind.Array)
-                return new();
-
-            return collection.EnumerateArray()
-                .Where(item => item.ValueKind == JsonValueKind.Object)
-                .Select(item => item.Clone())
-                .ToList();
-        }
-
-        return new();
+        if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
+            throw new InvalidOperationException($"SoundCloud playlist search failed: {error}");
+        return output;
     }
 
     private async Task<string> GetClientIdAsync(bool forceRefresh = false)
