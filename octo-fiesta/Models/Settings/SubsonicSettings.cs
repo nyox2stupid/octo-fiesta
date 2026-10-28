@@ -86,7 +86,12 @@ public enum MusicService
     /// <summary>
     /// Tidal music service, using your own account through Tidal's official API
     /// </summary>
-    Tidal
+    Tidal,
+
+    /// <summary>
+    /// SoundCloud search and downloads through yt-dlp, for tracks the uploader permits downloading.
+    /// </summary>
+    SoundCloud
 }
 
 public class SubsonicSettings
@@ -129,7 +134,7 @@ public class SubsonicSettings
     /// <summary>
     /// Music service to use (default: Deezer)
     /// Environment variable: MUSIC_SERVICE
-    /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "SquidWTF" (deprecated)
+    /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "SoundCloud", "SquidWTF" (deprecated)
     /// </summary>
     public MusicService MusicService { get; set; } = MusicService.Deezer;
     

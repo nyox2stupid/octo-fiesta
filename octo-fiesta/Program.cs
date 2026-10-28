@@ -3,6 +3,7 @@ using octo_fiesta.Services;
 using octo_fiesta.Services.Deezer;
 using octo_fiesta.Services.Qobuz;
 using octo_fiesta.Services.SquidWTF;
+using octo_fiesta.Services.SoundCloud;
 using octo_fiesta.Services.Tidal;
 using octo_fiesta.Services.Yandex;
 using octo_fiesta.Services.Local;
@@ -117,6 +118,12 @@ else if (musicService == MusicService.SquidWTF)
     // SquidWTF services (primary) - registered LAST to be injected by default
     builder.Services.AddSingleton<IMusicMetadataService, SquidWTFMetadataService>();
     builder.Services.AddSingleton<IDownloadService, SquidWTFDownloadService>();
+}
+else if (musicService == MusicService.SoundCloud)
+{
+    // SoundCloud search and downloads are handled by yt-dlp in the runtime image.
+    builder.Services.AddSingleton<IMusicMetadataService, SoundCloudMetadataService>();
+    builder.Services.AddSingleton<IDownloadService, SoundCloudDownloadService>();
 }
 else if (musicService == MusicService.Tidal)
 {
