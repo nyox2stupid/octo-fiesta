@@ -25,27 +25,37 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
     public async Task<SearchResult> SearchAllAsync(
         string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
     {
-        if (string.IsNullOrWhiteSpace(query)) return new();
+        if (string.IsNullOrWhiteSpace(query) ||
+            (songLimit <= 0 && albumLimit <= 0 && artistLimit <= 0))
+            return new();
 
-        var songsTask = songLimit > 0 ? SearchSongsAsync(query, songLimit) : Task.FromResult(new List<Song>());
-        var albumsTask = albumLimit > 0 ? SearchAlbumsAsync(query, albumLimit) : Task.FromResult(new List<Album>());
-        var artistsTask = artistLimit > 0 ? SearchArtistsAsync(query, artistLimit) : Task.FromResult(new List<Artist>());
-        await Task.WhenAll(songsTask, albumsTask, artistsTask);
+        // Reuse a single SoundCloud track search to derive all three result types.
+        var requestedLimit = Math.Max(songLimit, Math.Max(albumLimit, artistLimit));
+        var entries = await SearchEntriesAsync(query, Math.Clamp(requestedLimit * 3, 10, 50));
 
         return new SearchResult
         {
-            Songs = await songsTask,
-            Albums = await albumsTask,
-            Artists = await artistsTask
+            Songs = songLimit > 0
+                ? entries.Select(ParseSong).Where(song => song != null).Cast<Song>().Take(songLimit).ToList()
+                : new List<Song>(),
+            Albums = albumLimit > 0
+                ? await SearchAlbumsFromProfilesAsync(query, albumLimit, ExtractProfiles(entries))
+                : new List<Album>(),
+            Artists = artistLimit > 0
+                ? BuildArtists(entries, artistLimit)
+                : new List<Artist>()
         };
     }
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
-
         var entries = await SearchEntriesAsync(query, Math.Clamp(limit * 3, 10, 50));
-        return ExtractProfiles(entries)
+        return BuildArtists(entries, limit);
+    }
+
+    private static List<Artist> BuildArtists(IEnumerable<JsonElement> entries, int limit) =>
+        ExtractProfiles(entries)
             .Take(Math.Clamp(limit, 1, 50))
             .Select(profile => new Artist
             {
@@ -57,15 +67,19 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
                 ExternalId = EncodeUrl(profile.Url)
             })
             .ToList();
-    }
 
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
-
         var entries = await SearchEntriesAsync(query, Math.Clamp(limit * 3, 10, 50));
-        var profiles = ExtractProfiles(entries).Take(8).ToList();
-        if (profiles.Count == 0) return new();
+        return await SearchAlbumsFromProfilesAsync(query, limit, ExtractProfiles(entries));
+    }
+
+    private static async Task<List<Album>> SearchAlbumsFromProfilesAsync(
+        string query, int limit, List<Profile> discoveredProfiles)
+    {
+        var profiles = discoveredProfiles.Take(8).ToList();
+        if (profiles.Count == 0 || limit <= 0) return new();
 
         var collections = await Task.WhenAll(profiles.Select(async profile =>
         {
