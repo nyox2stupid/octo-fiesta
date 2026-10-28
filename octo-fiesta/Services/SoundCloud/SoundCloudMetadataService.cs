@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using octo_fiesta.Models.Domain;
 using octo_fiesta.Models.Search;
 using octo_fiesta.Models.Subsonic;
@@ -14,6 +16,16 @@ namespace octo_fiesta.Services.SoundCloud;
 public sealed class SoundCloudMetadataService : IMusicMetadataService
 {
     private const string Provider = "soundcloud";
+    private readonly HttpClient _httpClient;
+    private readonly SemaphoreSlim _clientIdLock = new(1, 1);
+    private string? _clientId;
+
+    public SoundCloudMetadataService(IHttpClientFactory httpClientFactory)
+    {
+        _httpClient = httpClientFactory.CreateClient();
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
     {
@@ -71,6 +83,29 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
+
+        // Search albums directly. Track-search-derived uploader lists can miss albums
+        // when none of the tracks happen to match the album title.
+        try
+        {
+            var albumEntries = await SearchSoundCloudCollectionAsync("search/albums", query, limit);
+            var albums = albumEntries
+                .Select(entry => ParseAlbum(entry, GetEntryUrl(entry),
+                    GetString(entry, "uploader") ?? GetNestedString(entry, "user", "username")))
+                .Where(album => album != null)
+                .Cast<Album>()
+                .GroupBy(album => album.ExternalId ?? album.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .Take(Math.Clamp(limit, 1, 50))
+                .ToList();
+
+            if (albums.Count > 0) return albums;
+        }
+        catch
+        {
+            // Fall back to profile album pages if the search endpoint changes or is unavailable.
+        }
+
         var entries = await SearchEntriesAsync(query, Math.Clamp(limit * 3, 10, 50));
         return await SearchAlbumsFromProfilesAsync(query, limit, ExtractProfiles(entries));
     }
@@ -311,6 +346,90 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
         }
     }
 
+    private async Task<List<JsonElement>> SearchSoundCloudCollectionAsync(
+        string endpoint, string query, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var clientId = await GetClientIdAsync(forceRefresh: attempt > 0);
+            var url = $"https://api-v2.soundcloud.com/{endpoint}" +
+                      $"?q={Uri.EscapeDataString(query)}" +
+                      $"&limit={Math.Clamp(limit, 1, 50)}&linked_partitioning=1" +
+                      $"&client_id={Uri.EscapeDataString(clientId)}";
+
+            using var response = await _httpClient.GetAsync(url);
+            if ((response.StatusCode == System.Net.HttpStatusCode.Forbidden ||
+                 response.StatusCode == System.Net.HttpStatusCode.Unauthorized) && attempt == 0)
+            {
+                continue;
+            }
+
+            if (!response.IsSuccessStatusCode) return new();
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (!doc.RootElement.TryGetProperty("collection", out var collection) ||
+                collection.ValueKind != JsonValueKind.Array)
+                return new();
+
+            return collection.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => item.Clone())
+                .ToList();
+        }
+
+        return new();
+    }
+
+    private async Task<string> GetClientIdAsync(bool forceRefresh = false)
+    {
+        if (!forceRefresh && !string.IsNullOrWhiteSpace(_clientId)) return _clientId!;
+
+        await _clientIdLock.WaitAsync();
+        try
+        {
+            if (!forceRefresh && !string.IsNullOrWhiteSpace(_clientId)) return _clientId!;
+
+            var homepage = await _httpClient.GetStringAsync("https://soundcloud.com/");
+            var scriptMatches = Regex.Matches(
+                homepage, @"<script[^>]+src=[""']([^""']+)[""']", RegexOptions.IgnoreCase);
+
+            // yt-dlp uses the same approach: client IDs are embedded in SoundCloud JS bundles
+            // and rotate periodically, so don't hard-code one.
+            foreach (Match scriptMatch in scriptMatches.Cast<Match>().Reverse())
+            {
+                var scriptUrl = WebUtility.HtmlDecode(scriptMatch.Groups[1].Value);
+                if (!Uri.TryCreate(new Uri("https://soundcloud.com/"), scriptUrl, out var absoluteScriptUrl))
+                    continue;
+
+                try
+                {
+                    var script = await _httpClient.GetStringAsync(absoluteScriptUrl);
+                    var clientIdMatch = Regex.Match(
+                        script, @"client_id\s*:\s*[""']([0-9a-zA-Z]{32})[""']",
+                        RegexOptions.IgnoreCase);
+
+                    if (clientIdMatch.Success)
+                    {
+                        _clientId = clientIdMatch.Groups[1].Value;
+                        return _clientId;
+                    }
+                }
+                catch
+                {
+                    // Some bundles may be unavailable; try the next one.
+                }
+            }
+
+            throw new InvalidOperationException("Could not find a SoundCloud client ID in the site scripts.");
+        }
+        finally
+        {
+            _clientIdLock.Release();
+        }
+    }
+
     private async Task<List<JsonElement>> SearchEntriesAsync(string query, int limit)
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
@@ -465,8 +584,9 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             Artist = artist,
             ArtistId = IsSoundCloudProfileUrl(profileUrl) ? ArtistId(profileUrl!) : null,
             Year = ReadYear(item),
-            SongCount = ReadCount(item, "playlist_count") ?? (songs.Count > 0 ? songs.Count : null),
-            ReleaseType = GetString(item, "album_type") ?? "album",
+            SongCount = ReadCount(item, "track_count") ?? ReadCount(item, "playlist_count")
+                ?? (songs.Count > 0 ? songs.Count : null),
+            ReleaseType = GetString(item, "album_type") ?? GetString(item, "set_type") ?? "album",
             CoverArtUrl = GetThumbnail(item),
             CoverArtUrlLarge = GetThumbnail(item),
             Genre = GetString(item, "genre"),
@@ -543,7 +663,7 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
 
     private static string? GetThumbnail(JsonElement item)
     {
-        var thumbnail = GetString(item, "thumbnail");
+        var thumbnail = GetString(item, "thumbnail") ?? GetString(item, "artwork_url");
         if (!string.IsNullOrWhiteSpace(thumbnail)) return thumbnail;
 
         if (item.ValueKind == JsonValueKind.Object &&
