@@ -88,8 +88,12 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
         // when none of the tracks happen to match the album title.
         try
         {
-            var albumEntries = await SearchSoundCloudCollectionAsync("search/albums", query, limit);
+            // SoundCloud exposes playlist/set search, not a dedicated public album-search endpoint.
+            // Albums are sets whose metadata marks set_type as album/ep/single.
+            var albumEntries = await SearchSoundCloudCollectionAsync(
+                "search/playlists", query, Math.Clamp(limit * 3, 10, 50));
             var albums = albumEntries
+                .Where(IsAlbumEntry)
                 .Select(entry => ParseAlbum(entry, GetEntryUrl(entry),
                     GetString(entry, "uploader") ?? GetNestedString(entry, "user", "username")))
                 .Where(album => album != null)
@@ -622,6 +626,17 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             CoverUrl = GetThumbnail(item),
             CreatedDate = ReadDate(item)
         };
+    }
+
+    private static bool IsAlbumEntry(JsonElement item)
+    {
+        var setType = GetString(item, "set_type")
+            ?? GetString(item, "album_type")
+            ?? GetNestedString(item, "playlist", "set_type");
+        return setType != null &&
+               (setType.Equals("album", StringComparison.OrdinalIgnoreCase) ||
+                setType.Equals("ep", StringComparison.OrdinalIgnoreCase) ||
+                setType.Equals("single", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsRelevant(string query, string title, string? creator)
