@@ -278,7 +278,10 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             var url = DecodeUrl(externalId);
             if (!IsSoundCloudSetUrl(url)) return null;
 
-            var (root, entries) = await GetCollectionPageAsync(url);
+            // Album detail needs resolved track metadata (not flat playlist stubs).
+            // Flat entries can omit the URL/fields that ParseSong needs, producing a
+            // valid album response with an empty song list in Subsonic clients.
+            var (root, entries) = await GetCollectionPageAsync(url, flatPlaylist: false);
             var album = ParseAlbum(root, url, null);
             if (album == null) return null;
 
@@ -330,7 +333,8 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             var url = DecodeUrl(externalId);
             if (!IsSoundCloudSetUrl(url)) return new();
 
-            var (root, entries) = await GetCollectionPageAsync(url);
+            // Resolve each track fully so playlist responses contain playable song metadata.
+            var (root, entries) = await GetCollectionPageAsync(url, flatPlaylist: false);
             var playlistName = GetString(root, "title") ?? "SoundCloud playlist";
             var playlistId = PlaylistIdHelper.CreatePlaylistId(Provider, EncodeUrl(url));
 
@@ -509,16 +513,20 @@ with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
         }
     }
 
-    private async Task<(JsonElement Root, List<JsonElement> Entries)> GetCollectionPageAsync(string url)
+    private async Task<(JsonElement Root, List<JsonElement> Entries)> GetCollectionPageAsync(
+        string url, bool flatPlaylist = true)
     {
         if (!IsSoundCloudUrl(url))
             throw new InvalidOperationException("Invalid SoundCloud URL.");
 
-        var json = await RunYtDlpAsync(new[]
-        {
-            "--ignore-errors", "--no-warnings", "--flat-playlist",
-            "--dump-single-json", "--skip-download", url
-        });
+        var args = new List<string> { "--ignore-errors", "--no-warnings" };
+        if (flatPlaylist)
+            args.Add("--flat-playlist");
+        args.Add("--dump-single-json");
+        args.Add("--skip-download");
+        args.Add(url);
+
+        var json = await RunYtDlpAsync(args);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement.Clone();
         var entries = root.TryGetProperty("entries", out var entriesElement) &&
