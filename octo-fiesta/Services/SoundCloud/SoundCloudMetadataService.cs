@@ -75,7 +75,7 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
         var artist = GetString(item, "artist") ?? GetString(item, "uploader") ?? "Unknown Artist";
         var id = Uri.EscapeDataString(url);
         var uploadDate = GetString(item, "upload_date");
-        int? year = uploadDate?.Length >= 4 && int.TryParse(uploadDate[..4], out var y) ? y : null;
+        int? year = uploadDate is { Length: >= 4 } && int.TryParse(uploadDate[..4], out var y) ? y : null;
         int? duration = item.TryGetProperty("duration", out var d) && d.ValueKind == JsonValueKind.Number
             ? (int)Math.Round(d.GetDouble()) : null;
         var thumbnail = GetString(item, "thumbnail");
