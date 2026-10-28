@@ -98,8 +98,21 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
                 "search/playlists", query, Math.Clamp(limit * 3, 10, 50));
             var albums = albumEntries
                 .Where(IsAlbumEntry)
-                .Select(entry => ParseAlbum(entry, GetEntryUrl(entry),
-                    GetString(entry, "uploader") ?? GetNestedString(entry, "user", "username")))
+                .Select(entry =>
+                {
+                    var album = ParseAlbum(entry, GetEntryUrl(entry),
+                        GetString(entry, "uploader") ?? GetNestedString(entry, "user", "username"));
+                    var playlistApiUrl = GetSoundCloudPlaylistApiUrl(entry);
+                    if (album != null && playlistApiUrl != null)
+                    {
+                        // Search results can contain stale SoundCloud permalinks after a
+                        // profile slug changes. Keep the stable playlist ID in the Subsonic
+                        // album ID and fetch details through yt-dlp's playlist API extractor.
+                        album.Id = AlbumId(playlistApiUrl);
+                        album.ExternalId = EncodeUrl(playlistApiUrl);
+                    }
+                    return album;
+                })
                 .Where(album => album != null)
                 .Cast<Album>()
                 .GroupBy(album => album.ExternalId ?? album.Id, StringComparer.OrdinalIgnoreCase)
@@ -717,6 +730,36 @@ with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
         ?? GetString(item, "permalink_url")
         ?? GetString(item, "url");
 
+    private static string? GetSoundCloudPlaylistApiUrl(JsonElement item)
+    {
+        var uri = GetString(item, "uri");
+        if (IsSoundCloudPlaylistApiUrl(uri)) return uri;
+
+        if (item.ValueKind == JsonValueKind.Object &&
+            item.TryGetProperty("id", out var id))
+        {
+            var idText = id.ValueKind switch
+            {
+                JsonValueKind.String => id.GetString(),
+                JsonValueKind.Number => id.GetRawText(),
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(idText) && idText.All(char.IsDigit))
+                return $"https://api-v2.soundcloud.com/playlists/{idText}";
+        }
+
+        return null;
+    }
+
+    private static bool IsSoundCloudPlaylistApiUrl(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return false;
+        var isSoundCloudApi = uri.Host.Equals("api.soundcloud.com", StringComparison.OrdinalIgnoreCase) ||
+                              uri.Host.Equals("api-v2.soundcloud.com", StringComparison.OrdinalIgnoreCase);
+        return isSoundCloudApi &&
+               uri.AbsolutePath.StartsWith("/playlists/", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string? GetString(JsonElement item, string property) =>
         item.ValueKind == JsonValueKind.Object &&
         item.TryGetProperty(property, out var value) &&
@@ -846,7 +889,8 @@ with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
     {
         if (!IsSoundCloudUrl(value) || !Uri.TryCreate(value, UriKind.Absolute, out var uri)) return false;
         return uri.AbsolutePath.Contains("/sets/", StringComparison.OrdinalIgnoreCase) ||
-               uri.AbsolutePath.Contains("/albums/", StringComparison.OrdinalIgnoreCase);
+               uri.AbsolutePath.Contains("/albums/", StringComparison.OrdinalIgnoreCase) ||
+               IsSoundCloudPlaylistApiUrl(value);
     }
 
     private static string CollectionUrl(string profileUrl, string collection) =>
