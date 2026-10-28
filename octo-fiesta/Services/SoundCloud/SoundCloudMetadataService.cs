@@ -216,7 +216,15 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
                 "--no-warnings", "--dump-single-json", "--skip-download", url
             });
             using var doc = JsonDocument.Parse(json);
-            return ParseSong(doc.RootElement);
+            var song = ParseSong(doc.RootElement);
+            if (song != null)
+            {
+                // Preserve the exact identifier supplied by the client. For album
+                // tracks this is the stable SoundCloud track API URL, not a permalink
+                // that may have gone stale after an uploader/profile rename.
+                song.ExternalId = EncodeUrl(url);
+            }
+            return song;
         }
         catch
         {
@@ -299,7 +307,14 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             if (album == null) return null;
 
             album.Songs = entries
-                .Select(ParseSong)
+                .Select(entry =>
+                {
+                    var song = ParseSong(entry);
+                    var trackApiUrl = GetSoundCloudTrackApiUrl(entry);
+                    if (song != null && trackApiUrl != null)
+                        song.ExternalId = EncodeUrl(trackApiUrl);
+                    return song;
+                })
                 .Where(song => song != null)
                 .Cast<Song>()
                 .ToList();
@@ -352,7 +367,14 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             var playlistId = PlaylistIdHelper.CreatePlaylistId(Provider, EncodeUrl(url));
 
             var songs = entries
-                .Select(ParseSong)
+                .Select(entry =>
+                {
+                    var song = ParseSong(entry);
+                    var trackApiUrl = GetSoundCloudTrackApiUrl(entry);
+                    if (song != null && trackApiUrl != null)
+                        song.ExternalId = EncodeUrl(trackApiUrl);
+                    return song;
+                })
                 .Where(song => song != null)
                 .Cast<Song>()
                 .ToList();
@@ -747,6 +769,34 @@ with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
 
         var uri = GetString(item, "uri");
         return IsSoundCloudPlaylistApiUrl(uri) ? uri : null;
+    }
+
+    private static string? GetSoundCloudTrackApiUrl(JsonElement item)
+    {
+        if (item.ValueKind == JsonValueKind.Object &&
+            item.TryGetProperty("id", out var id))
+        {
+            var idText = id.ValueKind switch
+            {
+                JsonValueKind.String => id.GetString(),
+                JsonValueKind.Number => id.GetRawText(),
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(idText) && idText.All(char.IsDigit))
+                return $"https://api-v2.soundcloud.com/tracks/{idText}";
+        }
+
+        var uri = GetString(item, "uri");
+        return IsSoundCloudTrackApiUrl(uri) ? uri : null;
+    }
+
+    private static bool IsSoundCloudTrackApiUrl(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return false;
+        var isSoundCloudApi = uri.Host.Equals("api.soundcloud.com", StringComparison.OrdinalIgnoreCase) ||
+                              uri.Host.Equals("api-v2.soundcloud.com", StringComparison.OrdinalIgnoreCase);
+        return isSoundCloudApi &&
+               uri.AbsolutePath.StartsWith("/tracks/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSoundCloudPlaylistApiUrl(string? value)
