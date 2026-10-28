@@ -75,7 +75,7 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
         return await SearchAlbumsFromProfilesAsync(query, limit, ExtractProfiles(entries));
     }
 
-    private static async Task<List<Album>> SearchAlbumsFromProfilesAsync(
+    private async Task<List<Album>> SearchAlbumsFromProfilesAsync(
         string query, int limit, List<Profile> discoveredProfiles)
     {
         var profiles = discoveredProfiles.Take(8).ToList();
