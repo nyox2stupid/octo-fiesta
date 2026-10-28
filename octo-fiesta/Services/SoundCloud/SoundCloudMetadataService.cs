@@ -732,9 +732,6 @@ with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
 
     private static string? GetSoundCloudPlaylistApiUrl(JsonElement item)
     {
-        var uri = GetString(item, "uri");
-        if (IsSoundCloudPlaylistApiUrl(uri)) return uri;
-
         if (item.ValueKind == JsonValueKind.Object &&
             item.TryGetProperty("id", out var id))
         {
@@ -748,7 +745,8 @@ with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
                 return $"https://api-v2.soundcloud.com/playlists/{idText}";
         }
 
-        return null;
+        var uri = GetString(item, "uri");
+        return IsSoundCloudPlaylistApiUrl(uri) ? uri : null;
     }
 
     private static bool IsSoundCloudPlaylistApiUrl(string? value)
