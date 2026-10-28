@@ -41,24 +41,28 @@ public sealed class SoundCloudMetadataService : IMusicMetadataService
             (songLimit <= 0 && albumLimit <= 0 && artistLimit <= 0))
             return new();
 
-        // Reuse a single SoundCloud track search to derive all three result types.
-        var requestedLimit = Math.Max(songLimit, Math.Max(albumLimit, artistLimit));
-        var entries = await SearchEntriesAsync(query, Math.Clamp(requestedLimit * 3, 10, 50));
+        // Use each category's own search method. In particular, albums must go
+        // through SearchAlbumsAsync so the direct SoundCloud playlist/set search
+        // runs instead of relying only on artists discovered via track search.
+        var songsTask = songLimit > 0
+            ? SearchSongsAsync(query, songLimit)
+            : Task.FromResult(new List<Song>());
+        var albumsTask = albumLimit > 0
+            ? SearchAlbumsAsync(query, albumLimit)
+            : Task.FromResult(new List<Album>());
+        var artistsTask = artistLimit > 0
+            ? SearchArtistsAsync(query, artistLimit)
+            : Task.FromResult(new List<Artist>());
+
+        await Task.WhenAll(songsTask, albumsTask, artistsTask);
 
         return new SearchResult
         {
-            Songs = songLimit > 0
-                ? entries.Select(ParseSong).Where(song => song != null).Cast<Song>().Take(songLimit).ToList()
-                : new List<Song>(),
-            Albums = albumLimit > 0
-                ? await SearchAlbumsFromProfilesAsync(query, albumLimit, ExtractProfiles(entries))
-                : new List<Album>(),
-            Artists = artistLimit > 0
-                ? BuildArtists(entries, artistLimit)
-                : new List<Artist>()
+            Songs = await songsTask,
+            Albums = await albumsTask,
+            Artists = await artistsTask
         };
     }
-
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
