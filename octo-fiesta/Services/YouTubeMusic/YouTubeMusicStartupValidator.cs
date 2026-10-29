@@ -42,9 +42,10 @@ public sealed class YouTubeMusicStartupValidator : IStartupValidator
             {
                 await process.WaitForExitAsync(timeout.Token);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
+                cancellationToken.ThrowIfCancellationRequested();
                 WriteStatus("yt-dlp", "TIMEOUT", ConsoleColor.Yellow);
                 WriteDetail("yt-dlp --version exceeded 10 seconds.");
                 return ValidationResult.Failure("TIMEOUT", "yt-dlp did not respond within 10 seconds.", ConsoleColor.Yellow);
