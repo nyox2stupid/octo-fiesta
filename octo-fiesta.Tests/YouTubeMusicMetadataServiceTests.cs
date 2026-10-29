@@ -63,6 +63,30 @@ public class YouTubeMusicMetadataServiceTests
     }
 
     [Fact]
+    public void ParseSong_PreservesNestedAlbumUrlForAlbumDownloadMode()
+    {
+        const string albumUrl = "https://music.youtube.com/browse/MPREb_example123";
+        var item = ParseJson("""
+            {
+              "id": "dQw4w9WgXcQ",
+              "title": "Test Song",
+              "artist": "Example Artist",
+              "album": {
+                "id": "MPREb_example123",
+                "name": "Example Album",
+                "url": "https://music.youtube.com/browse/MPREb_example123"
+              }
+            }
+            """);
+
+        var song = YouTubeMusicMetadataService.ParseSong(item);
+
+        Assert.NotNull(song);
+        Assert.Equal("Example Album", song.Album);
+        Assert.Equal("ext-youtube-album-" + Uri.EscapeDataString(albumUrl), song.AlbumId);
+    }
+
+    [Fact]
     public void ParseAlbum_UsesStableMusicBrowseUrl()
     {
         const string albumUrl = "https://music.youtube.com/browse/MPREb_example123";
