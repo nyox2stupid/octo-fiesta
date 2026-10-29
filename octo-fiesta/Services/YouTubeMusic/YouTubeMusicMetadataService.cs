@@ -48,7 +48,7 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
 
         try
         {
-            var entries = await SearchEntriesAsync(query, "albums", limit);
+            var entries = await SearchEntriesAsync(query, "albums", limit, flatPlaylist: false);
             return entries
                 .Select(entry => ParseAlbum(entry, null, null))
                 .Where(album => album != null)
@@ -70,7 +70,7 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
 
         try
         {
-            var entries = await SearchEntriesAsync(query, "artists", limit);
+            var entries = await SearchEntriesAsync(query, "artists", limit, flatPlaylist: false);
             return entries
                 .Select(ParseArtist)
                 .Where(artist => artist != null)
@@ -299,18 +299,24 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
         }
     }
 
-    private static async Task<List<JsonElement>> SearchEntriesAsync(string query, string section, int limit)
+    private static async Task<List<JsonElement>> SearchEntriesAsync(string query, string section, int limit, bool flatPlaylist = true)
     {
         if (string.IsNullOrWhiteSpace(query) || limit <= 0) return new();
 
         var url = BuildSearchUrl(query, section);
-        var json = await RunYtDlpAsync(new[]
-        {
-            "--ignore-errors", "--no-warnings", "--flat-playlist",
-            "--playlist-end", Math.Clamp(limit, 1, 50).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--dump-single-json", "--skip-download", url
-        });
+        var args = new List<string> { "--ignore-errors", "--no-warnings" };
+        // Song and playlist search results carry useful metadata when flat. Album and
+        // artist search results are only browse URLs, so resolve them for their titles
+        // and artist metadata instead of accepting the incomplete flat entries.
+        if (flatPlaylist)
+            args.Add("--flat-playlist");
+        args.Add("--playlist-end");
+        args.Add(Math.Clamp(limit, 1, 50).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        args.Add("--dump-single-json");
+        args.Add("--skip-download");
+        args.Add(url);
 
+        var json = await RunYtDlpAsync(args);
         using var doc = JsonDocument.Parse(json);
         return ReadEntries(doc.RootElement);
     }
