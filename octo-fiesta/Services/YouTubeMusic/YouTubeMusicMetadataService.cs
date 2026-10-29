@@ -344,7 +344,7 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
             .ToList();
     }
 
-    private static Song? ParseSong(JsonElement item, Album? parentAlbum = null)
+    internal static Song? ParseSong(JsonElement item, Album? parentAlbum = null)
     {
         var videoId = TryGetVideoId(GetEntryUrl(item)) ?? TryGetVideoId(GetString(item, "id"));
         var title = GetString(item, "title") ?? GetString(item, "track");
@@ -418,9 +418,7 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
             Artist = artist,
             ArtistId = GetArtistUrl(item) is string artistUrl ? ArtistId(artistUrl) : null,
             Year = ReadYear(item),
-            SongCount = ReadInt(item, "playlist_count") ?? ReadInt(item, "track_count") ??
-                        (item.TryGetProperty("entries", out var entries) && entries.ValueKind == JsonValueKind.Array
-                            ? entries.GetArrayLength() : null),
+            SongCount = ReadInt(item, "playlist_count") ?? ReadInt(item, "track_count") ?? ReadEntryCount(item),
             ReleaseType = GetString(item, "album_type") ?? "album",
             CoverArtUrl = GetThumbnail(item),
             CoverArtUrlLarge = GetThumbnail(item),
@@ -452,7 +450,7 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
         };
     }
 
-    private static ExternalPlaylist? ParsePlaylist(JsonElement item, string? fallbackUrl, int? fallbackCount = null)
+    internal static ExternalPlaylist? ParsePlaylist(JsonElement item, string? fallbackUrl, int? fallbackCount = null)
     {
         var url = NormalizeCollectionUrl(GetEntryUrl(item))
             ?? NormalizeCollectionUrl(fallbackUrl)
@@ -555,11 +553,19 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
 
     private static int? ReadInt(JsonElement item, string property)
     {
-        if (!item.TryGetProperty(property, out var value)) return null;
+        if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty(property, out var value))
+            return null;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)) return number;
         if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out number)) return number;
         return null;
     }
+
+    private static int? ReadEntryCount(JsonElement item) =>
+        item.ValueKind == JsonValueKind.Object &&
+        item.TryGetProperty("entries", out var entries) &&
+        entries.ValueKind == JsonValueKind.Array
+            ? entries.GetArrayLength()
+            : null;
 
     private static int? ReadYear(JsonElement item)
     {
@@ -607,12 +613,19 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
             return null;
 
         if (uri.AbsolutePath.StartsWith("/channel/", StringComparison.OrdinalIgnoreCase) ||
-            uri.AbsolutePath.StartsWith("/browse/", StringComparison.OrdinalIgnoreCase) ||
             uri.AbsolutePath.StartsWith("/@/", StringComparison.OrdinalIgnoreCase) ||
             Regex.IsMatch(uri.AbsolutePath, @"/@[^/]+", RegexOptions.IgnoreCase) ||
             uri.AbsolutePath.StartsWith("/user/", StringComparison.OrdinalIgnoreCase))
         {
             return uri.ToString();
+        }
+
+        if (uri.AbsolutePath.StartsWith("/browse/", StringComparison.OrdinalIgnoreCase))
+        {
+            var browseId = uri.AbsolutePath.TrimEnd('/').Split('/').LastOrDefault();
+            // Album browse IDs also live under /browse/, but are not artist pages.
+            if (!string.IsNullOrWhiteSpace(browseId) && !AlbumBrowseIdPattern.IsMatch(browseId))
+                return uri.ToString();
         }
 
         return null;
