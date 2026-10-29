@@ -19,7 +19,15 @@ RUN dotnet publish octo-fiesta/octo-fiesta.csproj -c Release -p:Version=$VERSION
 FROM mcr.microsoft.com/dotnet/aspnet:9.0
 WORKDIR /app
 
-RUN mkdir -p /app/downloads
+# yt-dlp and ffmpeg power YouTube Music search, extraction, and audio conversion.
+# Deno is installed as yt-dlp's JavaScript runtime for modern YouTube extraction.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg python3 python3-pip unzip \
+    && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default]" \
+    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/downloads
 
 COPY --from=build /app/publish .
 
