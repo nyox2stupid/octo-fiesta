@@ -78,6 +78,7 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
 - [Getting Qobuz Credentials (User ID & Token)](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token))
 - [Getting Tidal Credentials (OAuth Tokens)](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Tidal-Credentials-(OAuth-Tokens))
 - **SquidWTF** (deprecated): No credentials needed
+- **YouTube Music**: no API key required for public search and downloads; some tracks may require sign-in or be unavailable to yt-dlp
 - **Yandex**: credentials may be obtained by authorizing official Yandex Music OAuth client [here](https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d). After authorization OAuth token will appear in the address bar in `#access_token=` fragment
 
 ## Architecture
@@ -96,6 +97,7 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
                         │  - Qobuz        │
                         │  - Tidal        │
                         │  - Yandex       │
+                        │  - YouTube Music│
                         └─────────────────┘
 ```
 
