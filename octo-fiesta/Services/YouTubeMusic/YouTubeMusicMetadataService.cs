@@ -360,7 +360,13 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
             ?? GetNestedString(item, "album", "title")
             ?? GetString(item, "album")
             ?? "YouTube Music";
-        var albumUrl = parentAlbum?.ExternalId == null ? null : Decode(parentAlbum.ExternalId);
+        var albumUrl = parentAlbum?.ExternalId != null
+            ? NormalizeCollectionUrl(Decode(parentAlbum.ExternalId))
+            : NormalizeCollectionUrl(
+                GetString(item, "album_url")
+                ?? GetNestedString(item, "album", "url")
+                ?? GetNestedString(item, "album", "webpage_url")
+                ?? UrlFromResourceId(GetNestedString(item, "album", "id")));
         var duration = ReadInt(item, "duration");
         var year = ReadYear(item);
         var artistLinks = new List<Artist>();
@@ -383,7 +389,7 @@ public sealed class YouTubeMusicMetadataService : IMusicMetadataService
             ArtistId = artistId,
             Artists = artistLinks,
             Album = albumName,
-            AlbumId = parentAlbum?.Id ?? (albumUrl == null ? null : AlbumId(albumUrl)),
+                        AlbumId = parentAlbum?.Id ?? (albumUrl == null ? null : AlbumId(albumUrl)),
             AlbumArtist = parentAlbum?.Artist ?? GetString(item, "album_artist") ?? artist,
             Duration = duration,
             Track = ReadInt(item, "track_number") ?? ReadInt(item, "track"),
